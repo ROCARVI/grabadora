@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reporteros Digitales - Grabadora de Audio</title>
+    <!-- Importación de Tailwind CSS para el diseño -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Quicksand:wght@400;600;700&display=swap');
+        
+        body {
+            font-family: 'Quicksand', sans-serif;
+            background-color: #f3f4f6;
+        }
+
+        /* Animación para el botón de grabación activa */
+        .pulse-recording {
+            animation: pulse-red 1.5s infinite;
+        }
+
+        @keyframes pulse-red {
+            0% { box-shadow: 0 0 0 0 rgba(230, 57, 70, 0.7); }
+            70% { box-shadow: 0 0 0 15px rgba(230, 57, 70, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(230, 57, 70, 0); }
+        }
+
+        /* Estilos del canvas para el visualizador */
+        canvas {
+            width: 100%;
+            height: 120px;
+            background: #ffffff;
+            border-radius: 1rem;
+            border: 1px solid #e5e7eb;
+        }
+
+        /* Banner de errores */
+        .error-banner {
+            background-color: #fee2e2;
+            color: #b91c1c;
+            padding: 16px;
+            border-radius: 16px;
+            margin-bottom: 20px;
+            font-size: 0.85rem;
+            display: none;
+            border: 1px solid #fecaca;
+            line-height: 1.4;
+        }
+
+        input:focus {
+            outline: none;
+            border-color: #38bdf8;
+        }
+    </style>
+</head>
+<body class="flex items-center justify-center min-h-screen p-4">
+
+    <div class="w-full max-w-md bg-white border border-gray-200 rounded-3xl p-8 shadow-xl">
+        
+        <!-- Alerta de configuración para Google Sites u otros Iframes -->
+        <div id="iframeBanner" class="hidden bg-yellow-50 border border-yellow-200 text-yellow-800 p-5 rounded-2xl mb-6 text-sm text-center shadow-sm">
+            <p class="mb-2 font-bold text-base">⚠️ Configuración Requerida</p>
+            <p class="mb-0">Para usar el micrófono en Google Sites, evita usar "Insertar Código". Sube este archivo a un servidor seguro (como Netlify) e insértalo usando la opción <strong>"Mediante URL"</strong>.</p>
+        </div>
+
+        <!-- Banner de errores dinámicos -->
+        <div id="errorBanner" class="error-banner"></div>
+
+        <!-- Título principal -->
+        <div class="text-center mb-8">
+            <h1 class="text-2xl font-bold text-gray-800">🎙️ Mi Grabadora</h1>
+            <p class="text-gray-500 text-sm">Crea tus propios audios digitales</p>
+        </div>
+
+        <!-- Contenedor del Visualizador y Cronómetro -->
+        <div class="mb-6 relative">
+            <canvas id="visualizer"></canvas>
+            <div id="timer" class="absolute top-2 right-4 text-gray-400 font-mono text-sm font-bold">00:00</div>
+        </div>
+
+        <!-- Controles de la grabadora -->
+        <div class="flex flex-col gap-6">
+            <div class="flex justify-center items-center gap-6">
+                <!-- Botón Iniciar Grabación -->
+                <button id="recordBtn" class="w-16 h-16 bg-red-500 hover:bg-red-600 text-white rounded-full flex items-center justify-center transition-all shadow-lg active:scale-95">
+                    <div id="recordIcon" class="w-5 h-5 bg-white rounded-full"></div>
+                </button>
+
+                <!-- Botón Detener Grabación -->
+                <button id="stopBtn" disabled class="w-16 h-16 bg-gray-800 hover:bg-black text-white rounded-full flex items-center justify-center transition-all shadow-lg opacity-30 cursor-not-allowed active:scale-95">
+                    <div class="w-5 h-5 bg-white rounded-sm"></div>
+                </button>
+            </div>
+
+            <!-- Sección de Reproducción y Exportación -->
+            <div id="playbackArea" class="hidden flex-col gap-4 p-5 bg-gray-50 rounded-2xl border border-gray-100">
+                <p class="text-xs font-bold text-gray-400 uppercase">1. Escucha tu audio:</p>
+                <audio id="audioPlayback" controls class="w-full h-10"></audio>
+                
+                <div class="mt-2">
+                    <p class="text-xs font-bold text-gray-400 uppercase mb-2">2. Asigna un nombre:</p>
+                    <input type="text" id="fileNameInput" placeholder="Nombre de mi audio" class="w-full p-3 rounded-xl border-2 border-gray-200 text-sm font-semibold mb-3 transition-all" value="mi_grabacion">
+                    
+                    <button id="downloadBtn" class="flex items-center justify-center gap-2 w-full py-3 bg-blue-500 hover:bg-blue-600 text-white font-bold rounded-xl transition-colors shadow-md active:scale-95">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+                            <polyline points="17 21 17 13 7 13 7 21"></polyline>
+                            <polyline points="7 3 7 8 15 8"></polyline>
+                        </svg>
+                        GUARDAR
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Estado de la actividad -->
+        <div class="mt-8 pt-6 border-t border-gray-100 text-center">
+            <p id="statusText" class="text-gray-400 text-xs font-semibold uppercase tracking-widest">Listo para empezar</p>
+        </div>
+    </div>
+
+    <script>
+        /**
+         * Lógica principal de la Grabadora
+         */
+        let mediaRecorder;
+        let audioChunks = [];
+        let audioContext;
+        let analyser;
+        let dataArray;
+        let animationId;
+        let startTime;
+        let timerInterval;
+        let currentAudioBlob;
+
+        const recordBtn = document.getElementById('recordBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const downloadBtn = document.getElementById('downloadBtn');
+        const audioPlayback = document.getElementById('audioPlayback');
+        const playbackArea = document.getElementById('playbackArea');
+        const statusText = document.getElementById('statusText');
+        const timerDisplay = document.getElementById('timer');
+        const errorBanner = document.getElementById('errorBanner');
+        const iframeBanner = document.getElementById('iframeBanner');
+        const fileNameInput = document.getElementById('fileNameInput');
+        const canvas = document.getElementById('visualizer');
+        const canvasCtx = canvas.getContext('2d');
+
+        // Verificación de compatibilidad e iframes al cargar
+        window.onload = () => {
+            if (window.self !== window.top) {
+                navigator.mediaDevices.getUserMedia({ audio: true })
+                    .then(stream => {
+                        stream.getTracks().forEach(track => track.stop());
+                    })
+                    .catch(err => {
+                        if(err.name === "SecurityError" || err.name === "NotAllowedError") {
+                            iframeBanner.style.display = 'block';
+                        }
+                    });
+            }
+        };
+
+        function showError(msg) {
+            errorBanner.innerHTML = msg;
+            errorBanner.style.display = 'block';
+        }
+
+        function resizeCanvas() {
+            canvas.width = canvas.offsetWidth;
+            canvas.height = canvas.offsetHeight;
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        // Acción al presionar el botón Grabar
+        recordBtn.onclick = async () => {
+            errorBanner.style.display = 'none';
+            try {
+                const constraints = { 
+                    audio: {
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true
+                    } 
+                };
+                
+                const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                iframeBanner.style.display = 'none'; 
+                setupVisualizer(stream);
+                
+                mediaRecorder = new MediaRecorder(stream);
+                audioChunks = [];
+
+                mediaRecorder.ondataavailable = (event) => {
+                    if (event.data.size > 0) audioChunks.push(event.data);
+                };
+
+                mediaRecorder.onstop = () => {
+                    currentAudioBlob = new Blob(audioChunks, { type: 'audio/mpeg' });
+                    const audioUrl = URL.createObjectURL(currentAudioBlob);
+                    audioPlayback.src = audioUrl;
+                    
+                    playbackArea.classList.remove('hidden');
+                    playbackArea.classList.add('flex');
+                    
+                    const dateStr = new Date().toLocaleDateString().replace(/\//g, '-');
+                    fileNameInput.value = `Grabacion_${dateStr}`;
+                };
+
+                mediaRecorder.start();
+                startTimer();
+                
+                // Actualizar UI
+                recordBtn.classList.add('pulse-recording', 'opacity-50', 'pointer-events-none');
+                stopBtn.disabled = false;
+                stopBtn.classList.remove('opacity-30', 'cursor-not-allowed');
+                statusText.innerText = "Grabando...";
+                statusText.classList.add('text-red-500');
+                playbackArea.classList.add('hidden');
+
+            } catch (err) {
+                console.error("Error de acceso:", err);
+                let errorMsg = "<strong>¡Ups! El micrófono está bloqueado.</strong><br><br>";
+                
+                if (window.self !== window.top && err.name === 'SecurityError') {
+                    errorMsg += "Google Sites restringe el acceso al micrófono en esta vista.";
+                } else if (err.name === 'NotAllowedError') {
+                    errorMsg += "Asegúrate de permitir el micrófono en los ajustes de tu navegador.";
+                } else {
+                    errorMsg += "Verifica que tu micrófono esté conectado correctamente.";
+                }
+                showError(errorMsg);
+            }
+        };
+
+        // Acción al presionar el botón Detener
+        stopBtn.onclick = () => {
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                mediaRecorder.stop();
+                stopTimer();
+                cancelAnimationFrame(animationId);
+                mediaRecorder.stream.getTracks().forEach(track => track.stop());
+
+                recordBtn.classList.remove('pulse-recording', 'opacity-50', 'pointer-events-none');
+                stopBtn.disabled = true;
+                stopBtn.classList.add('opacity-30', 'cursor-not-allowed');
+                statusText.innerText = "Escucha y guarda tu trabajo";
+                statusText.classList.remove('text-red-500');
+                statusText.classList.add('text-sky-500');
+            }
+        };
+
+        // Acción para guardar el archivo final
+        downloadBtn.onclick = async () => {
+            const fileName = fileNameInput.value.trim() || 'mi_grabacion';
+            const fullFileName = `${fileName}.mp3`;
+
+            try {
+                const audioUrl = URL.createObjectURL(currentAudioBlob);
+                const link = document.createElement('a');
+                link.href = audioUrl;
+                link.download = fullFileName;
+                link.target = "_blank";
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                statusText.innerText = "¡Archivo guardado!";
+            } catch (err) {
+                showError("No se pudo guardar el archivo. Intenta nuevamente.");
+            }
+        };
+
+        // Configuración del visualizador gráfico de ondas
+        function setupVisualizer(stream) {
+            if (audioContext) audioContext.close();
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const source = audioContext.createMediaStreamSource(stream);
+            analyser = audioContext.createAnalyser();
+            analyser.fftSize = 256;
+            source.connect(analyser);
+            const bufferLength = analyser.frequencyBinCount;
+            dataArray = new Uint8Array(bufferLength);
+            draw();
+        }
+
+        // Función de dibujo del visualizador
+        function draw() {
+            animationId = requestAnimationFrame(draw);
+            analyser.getByteFrequencyData(dataArray);
+            canvasCtx.fillStyle = '#ffffff';
+            canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
+            const barWidth = (canvas.width / dataArray.length) * 2.5;
+            let barHeight;
+            let x = 0;
+            for(let i = 0; i < dataArray.length; i++) {
+                barHeight = dataArray[i] / 2;
+                canvasCtx.fillStyle = `rgb(${dataArray[i] + 100}, 50, 50)`;
+                canvasCtx.fillRect(x, canvas.height/2 - barHeight/2, barWidth, barHeight);
+                x += barWidth + 1;
+            }
+        }
+
+        // Control del cronómetro de grabación
+        function startTimer() {
+            startTime = Date.now();
+            timerInterval = setInterval(() => {
+                const diff = Date.now() - startTime;
+                const seconds = Math.floor((diff / 1000) % 60);
+                const minutes = Math.floor((diff / 60000) % 60);
+                timerDisplay.innerText = `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+            }, 1000);
+        }
+
+        function stopTimer() {
+            clearInterval(timerInterval);
+            timerDisplay.innerText = "00:00";
+        }
+    </script>
+</body>
+</html>
